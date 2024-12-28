@@ -70,31 +70,3 @@ class ABTest:
             print("Fail to reject the null hypothesis. There is no statistically significant difference.")
         print("-" * 50)
 
-
-# # Example usage (assuming you have your DataFrame loaded as 'df'):
-# # Sample DataFrame creation (replace with your actual data)
-# np.random.seed(42)
-# data = {'Province': np.random.choice(['A', 'B', 'C'], 100),
-#         'PostalCode': np.random.choice([1000, 2000, 3000], 100),
-#         'Gender': np.random.choice(['Male', 'Female'], 100),
-#         'TotalClaims': np.random.randint(0, 1000, 100),
-#         'TotalPremium': np.random.randint(100, 500, 100)}
-# df = pd.DataFrame(data)
-
-# ab_test = ABTest(df)
-
-# # Test 1: Risk differences across provinces (using TotalClaims as risk proxy)
-# results_provinces = ab_test.perform_test("Province", "TotalClaims")
-# ab_test.analyze_and_report(results_provinces, "There are no risk differences across provinces")
-
-# # Test 2: Risk differences between zip codes (using TotalClaims as risk proxy)
-# results_zipcodes_risk = ab_test.perform_test("PostalCode", "TotalClaims")
-# ab_test.analyze_and_report(results_zipcodes_risk, "There are no risk differences between zip codes")
-
-# # Test 3: Profit difference between zip codes (using TotalPremium as profit proxy)
-# results_zipcodes_profit = ab_test.perform_test("PostalCode", "TotalPremium", test_type="ttest")
-# ab_test.analyze_and_report(results_zipcodes_profit, "There are no significant margin (profit) difference between zip codes")
-
-# # Test 4: Risk difference between Women and Men (using TotalClaims as risk proxy)
-# results_gender = ab_test.perform_test("Gender", "TotalClaims", test_type="ttest")
-# ab_test.analyze_and_report(results_gender, "There is no significant risk difference between Women and Men")
