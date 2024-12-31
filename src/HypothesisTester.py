@@ -1,72 +1,148 @@
 import pandas as pd
 import numpy as np
-from scipy.stats import chi2_contingency, ttest_ind
+from scipy.stats import ttest_ind
+import logging
+from statsmodels.formula.api import ols
+from statsmodels.stats.anova import anova_lm
 
-class ABTest:
+# Setting up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+class InsuranceABTester:
     def __init__(self, df):
-        self.df = df.copy()  # Create a copy to avoid modifying the original DataFrame
-        self.alpha = 0.05  # Significance level
+        self.df = df.copy()
+        self._clean_data()
+        self._calculate_profit()
 
-    def perform_test(self, group_col, value_col, test_type="chi2"):
-        """Performs A/B testing.
+    def _clean_data(self):
+        """Performs data cleaning and preprocessing."""
 
-        Args:
-            group_col: Column name for grouping (e.g., 'Province', 'PostalCode', 'Gender').
-            value_col: Column name for the metric (e.g., 'TotalClaims' for risk, 'TotalPremium' for margin).
-            test_type: "chi2" for categorical data, "ttest" for numerical data.
+        # Drop columns with > 50% missing values
+        missing_percentage = (self.df.isnull().sum() / len(self.df)) * 100
+        cols_to_drop = missing_percentage[missing_percentage > 50].index
+        self.df.drop(columns=cols_to_drop, inplace=True, errors='ignore')
+        logging.info(f"Dropped columns with >50% missing values: {list(cols_to_drop)}")
 
-        Returns:
-            A dictionary containing the test results (p-value, etc.), or None if an error occurs.
-        """
+        # Drop other irrelevant columns
+        cols_to_drop = ['NumberOfVehiclesInFleet']  # This was always empty
+        self.df.drop(columns=cols_to_drop, inplace=True, errors='ignore')
+        logging.info(f"Dropped irrelevant columns: {cols_to_drop}")
 
-        try:
-            if test_type == "chi2":
-                contingency_table = pd.crosstab(self.df[group_col], self.df[value_col])
-                chi2, p, dof, expected = chi2_contingency(contingency_table)
-                return {"p_value": p, "chi2": chi2, "dof": dof, "expected": expected}
-            elif test_type == "ttest":
-                groups = self.df[group_col].unique()
-                if len(groups) != 2:
-                  print(f"Column {group_col} has {len(groups)} unique values, ttest only works with 2 groups.")
-                  return None
-                group1 = self.df[self.df[group_col] == groups[0]][value_col].dropna()
-                group2 = self.df[self.df[group_col] == groups[1]][value_col].dropna()
-                if len(group1) == 0 or len(group2) == 0:
-                    print(f"One of the groups for {group_col} has no data after dropping NaN values.")
-                    return None
-                t_statistic, p_value = ttest_ind(group1, group2)
-                return {"p_value": p_value, "t_statistic": t_statistic}
-            else:
-                print("Invalid test type. Choose 'chi2' or 'ttest'.")
-                return None
-        except ValueError as e:
-            print(f"Error during testing: {e}")
-            return None
-        except Exception as e:
-            print(f"An unexpected error occurred: {e}")
-            return None
+        # Handle remaining missing values
+        logging.info("Handling missing values...")
+        for col in self.df.columns:
+            missing_percentage = self.df[col].isnull().sum() / len(self.df)
+            if missing_percentage > 0:
+                if pd.api.types.is_numeric_dtype(self.df[col]):
+                    try:
+                        self.df[col] = pd.to_numeric(
+                            self.df[col].astype(str).str.replace(',', '', regex=False), errors='coerce'
+                        )
 
+                        if missing_percentage < 0.5:
+                            mean_value = self.df[col].mean()
+                            self.df[col].fillna(mean_value, inplace=True)
+                            logging.info(f"Filled missing values in {col} with mean: {mean_value}")
+                        else:
+                            self.df.drop(col, axis=1, inplace=True)
+                            logging.warning(f"Removed column {col} due to excessive missing values.")
+                    except ValueError as e:
+                        logging.error(f"Error converting column '{col}' to numeric: {e}")
+                        self.df.drop(col, axis=1, inplace=True)
+                else:
+                    mode_value = self.df[col].mode()[0] if not self.df[col].mode().empty else 'Unknown'
+                    self.df[col].fillna(mode_value, inplace=True)
+                    logging.info(f"Filled missing values in non-numeric column {col} with mode: {mode_value}")
+        logging.info("Missing values handled.")
 
-    def analyze_and_report(self, test_results, hypothesis_text):
-        """Analyzes test results and prints a report.
+        # Convert to datetime
+        date_cols = ['TransactionMonth', 'VehicleIntroDate']
+        for col in date_cols:
+            try:
+                self.df[col] = pd.to_datetime(self.df[col], errors='coerce')
+                logging.info(f"Converted column {col} to datetime.")
+            except (ValueError, KeyError):
+                logging.warning(f"Date conversion failed for column: {col}. Check column names and format.")
 
-        Args:
-            test_results: The dictionary returned by perform_test().
-            hypothesis_text: Text describing the null hypothesis.
-        """
-        if test_results is None:
-            return
-        p_value = test_results.get("p_value")
-        if p_value is None:
-            print("P-value not found in test results.")
-            return
+        # Boolean Conversion
+        bool_cols = ['IsVATRegistered', 'NewVehicle', 'WrittenOff', 'Rebuilt', 'Converted']
+        for col in bool_cols:
+            try:
+                self.df[col] = (
+                    self.df[col]
+                    .map({'Yes': True, 'No': False, True: True, False: False})
+                    .fillna(False)
+                    .astype(bool)
+                )
+                logging.info(f"Converted column {col} to boolean.")
+            except KeyError:
+                logging.warning(f"Boolean conversion failed for column: {col}. Check column names and values.")
 
-        print(f"Null Hypothesis: {hypothesis_text}")
-        print(f"P-value: {p_value}")
+        # Categorical Conversion
+        cat_cols = ['Gender', 'MaritalStatus', 'AlarmImmobiliser', 'TrackingDevice', 'TermFrequency', 'ExcessSelected']
+        for col in cat_cols:
+            try:
+                self.df[col] = self.df[col].astype('category')
+                logging.info(f"Converted column {col} to categorical.")
+            except KeyError:
+                logging.warning(f"Category conversion failed for column: {col}. Check column names.")
 
-        if p_value < self.alpha:
-            print("Reject the null hypothesis. There is a statistically significant difference.")
+    def _calculate_profit(self):
+        if {'TotalPremium', 'TotalClaims'}.issubset(self.df.columns):
+            self.df['Profit'] = self.df['TotalPremium'] - self.df['TotalClaims']
+            logging.info("Calculated Profit column.")
         else:
-            print("Fail to reject the null hypothesis. There is no statistically significant difference.")
-        print("-" * 50)
+            logging.warning("One or both of 'TotalPremium' and 'TotalClaims' are missing. Skipping profit calculation.")
 
+    def perform_ab_testing(self):
+        self._test_hypothesis_anova("Province", "TotalClaims", "risk")
+        self._test_hypothesis_anova("PostalCode", "TotalClaims", "risk")
+        self._test_hypothesis_anova("PostalCode", "Profit", "profit")
+        self._test_gender_hypothesis_anova()
+
+    def _test_hypothesis_anova(self, group_col, metric_col, metric_type):
+        if group_col not in self.df.columns or metric_col not in self.df.columns:
+            logging.warning(f"Missing column(s) for hypothesis testing: {group_col}, {metric_col}")
+            return
+
+        # Create formula for linear regression
+        formula = f"{metric_col} ~ C({group_col})"
+
+        # Fit the model
+        model = ols(formula, data=self.df).fit()
+
+        # Perform ANOVA test
+        anova_table = anova_lm(model, typ=2)
+
+        # Print ANOVA table
+        print(anova_table)
+        
+        # Interpret of the results 
+        if anova_table["PR(>F)"].iloc[0] <= 0.05:
+            logging.info(f"Reject null hypothesis: Significant {metric_type} difference found.")
+        else:
+            logging.info(f"Fail to reject null hypothesis: No significant {metric_type} difference found.")
+
+    
+    def _test_gender_hypothesis_anova(self):
+        if 'Gender' not in self.df.columns or 'TotalClaims' not in self.df.columns:
+            logging.warning("Missing columns for gender hypothesis testing.")
+            return
+
+        # Create formula for linear regression with categorical gender
+        formula = f"TotalClaims ~ C(Gender)"
+
+        # Fit the model
+        model = ols(formula, data=self.df).fit()
+
+        # Perform ANOVA test
+        anova_table = anova_lm(model, typ=2)
+
+        # Print ANOVA table
+        print(anova_table)
+
+        #   Interpret of the results 
+        if anova_table["PR(>F)"].iloc[0] <= 0.05:
+            logging.info(f"Reject null hypothesis: Significant risk difference found.")
+        else:
+            logging.info(f"Fail to reject null hypothesis: No significant risk difference found.")
