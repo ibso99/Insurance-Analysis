@@ -1,0 +1,93 @@
+# Analysis Report
+
+## Data Preprocessing
+
+### Overview
+The data preprocessing involved handling missing values, feature engineering, and data transformation. The following steps were taken:
+
+1. **Handling Missing Values**: Columns with more than 50% missing values were dropped. Remaining missing values were imputed with mean or mode based on the column type.
+2. **Feature Engineering**: New features such as `VehicleAge` and `VehicleIntroYear` were created from existing columns.
+3. **Data Transformation**: Numerical and categorical columns were identified and transformed using pipelines for imputation, scaling, and encoding.
+
+### Code Snippet
+```python
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+import os
+import logging
+
+class DataPreprocessor:
+    # Class implementation
+```
+
+## A/B Testing
+
+### Overview
+A/B testing was conducted to determine if there were significant differences in `TotalClaims` and `Profit` across different groups such as `Province`, `PostalCode`, and `Gender`.
+
+### Key Findings
+- Significant differences in `TotalClaims` were found across different `Provinces` and `PostalCodes`.
+- No significant difference in `TotalClaims` based on `Gender`.
+
+### Code Snippet
+```python
+import pandas as pd
+import numpy as np
+from scipy.stats import ttest_ind
+import logging
+from statsmodels.formula.api import ols
+from statsmodels.stats.anova import anova_lm
+
+class InsuranceABTester:
+    # Class implementation
+```
+
+## Exploratory Data Analysis (EDA)
+
+### Overview
+EDA was performed to understand the data distribution, identify outliers, and visualize relationships between features.
+
+### Key Findings
+- Histograms and bar charts were used to visualize the distribution of numerical and categorical features.
+- Correlation matrix and scatter plots highlighted relationships between key features such as `TotalPremium` and `TotalClaims`.
+
+### Code Snippet
+```python
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+class InsuranceDataAnalyzer:
+    # Class implementation
+```
+
+## Model Evaluation
+
+### Overview
+Several regression models were evaluated to predict `TotalPremium` and `TotalClaims`. Metrics such as MAE, MSE, RMSE, and R² were calculated for each model.
+
+### Key Findings
+- RandomForestRegressor and XGBRegressor showed the best performance based on RMSE and R² scores.
+
+### Code Snippet
+```python
+import os
+import logging
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.tree import DecisionTreeRegressor
+from xgboost import XGBRegressor
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import train_test_split
+import pandas as pd
+import numpy as np
+
+class ModelEvaluator:
+    # Class implementation
+```
