@@ -1,107 +1,143 @@
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.base import BaseEstimator, TransformerMixin
+import os
+import logging
 
-class DataPipeline:
+class DataPreprocessor:
+    def __init__(self, output_dir="preprocessed_data", test_size=0.2, random_state=42, config=None):
+        self.output_dir = output_dir
+        self.test_size = test_size
+        self.random_state = random_state
+        self.config = config if config else {}
+        os.makedirs(self.output_dir, exist_ok=True)
+
+        # Set up basic logging
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     
-    def __init__(self, data):
-        self.data = data
+    class FeatureEngineer(BaseEstimator, TransformerMixin):
+        def fit(self, X, y=None):
+            return self
 
-    def data_structure(self):
-        print(self.data.info())
+        def transform(self, X):
+            X = X.copy()
+            if 'RegistrationYear' in X.columns:
+                X['VehicleAge'] = pd.to_datetime('now').year - X['RegistrationYear']
+                X.drop('RegistrationYear', axis=1, inplace=True)
+                logging.info("Feature 'VehicleAge' created from 'RegistrationYear'.")
 
-    def missing_values(self):
-        missing_values = self.data.isnull().sum()
-        print(missing_values[missing_values > 0])
+            if 'VehicleIntroDate' in X.columns:
+                X['VehicleIntroYear'] = pd.to_datetime(X['VehicleIntroDate'], format='%Y-%m-%d', errors='coerce').dt.year
+                X['VehicleIntroYear'] = X['VehicleIntroYear'].fillna(X['VehicleIntroYear'].median())
+                X.drop('VehicleIntroDate', axis=1, inplace=True)
+                logging.info("Feature 'VehicleIntroYear' created from 'VehicleIntroDate'.")
+            
+            return X
 
-    def impute_missing_values(self):
-        # Drop columns with more than 60% missing values
-        threshold = 0.6
-        self.data = self.data.loc[:, self.data.isnull().mean() < threshold]
-        
-        # Impute missing values with mean for numerical columns
-        numerical_cols = self.data.select_dtypes(include=['float64', 'int64']).columns
-        for col in numerical_cols:
-            self.data[col].fillna(self.data[col].mean())
+    def process_data(self, df, target_premium='TotalPremium', target_claims='TotalClaims'):
+        # Handle missing values in the dataframe
+        if df.isnull().sum().sum() > 0:
+            logging.warning(f"Data contains missing values. Handling missing data...")
 
-    def data_summary(self):
-        numerical_cols = self.data.select_dtypes(include=['float64', 'int64']).columns
-        print(self.data[numerical_cols].describe())
+        self.df = df.copy()
 
-    def univariate_analysis(self):
-        num_cols = self.data.select_dtypes(include=['float64', 'int64']).columns
-        cat_cols = self.data.select_dtypes(include=['object']).columns
-        
-        num_plots = len(num_cols)
-        cat_plots = len(cat_cols)
-        total_plots = num_plots + cat_plots
-        
-        fig, axes = plt.subplots(total_plots, 1, figsize=(10, 5 * total_plots))
-        
-        for i, col in enumerate(num_cols):
-            self.data[col].hist(bins=30, ax=axes[i])
-            axes[i].set_xlabel(col)
-            axes[i].set_ylabel('Frequency')
-            axes[i].set_title(f'Distribution of {col}')
-        
-        for i, col in enumerate(cat_cols):
-            self.data[col].value_counts().plot(kind='bar', ax=axes[num_plots + i])
-            axes[num_plots + i].set_xlabel(col)
-            axes[num_plots + i].set_ylabel('Count')
-            axes[num_plots + i].set_title(f'Distribution of {col}')
-        
-        plt.tight_layout()
-        plt.show()
+        # Remove problematic columns 32 and 37
+        if len(self.df.columns) > 37:
+            columns_to_remove = [self.df.columns[32], self.df.columns[37]]
+            self.df = self.df.drop(columns=columns_to_remove)
+            logging.info(f"Removed columns: {columns_to_remove}")
+        else:
+            logging.warning("The dataframe does not have enough columns to remove 32 and 37.")
 
-    def bivariate_analysis(self):
-        # Scatter plot
-        plt.figure(figsize=(8, 4))
-        plt.scatter(self.data['TotalPremium'], self.data['TotalClaims'])
-        plt.xlabel('Total Premium')
-        plt.ylabel('Total Claims')
-        plt.title('Relationship between Total Premium and Total Claims')
-        plt.show()
+        # Apply feature engineering
+        engineer = self.FeatureEngineer()
+        self.df = engineer.transform(self.df)
 
-        # Correlation matrix
-        corr_matrix = self.data[['TotalPremium', 'TotalClaims', 'SumInsured']].corr()
-        plt.figure(figsize=(8, 6))
-        sns.heatmap(corr_matrix, annot=True, cmap='coolwarm')
-        plt.title('Correlation Matrix')
-        plt.show()
+        # Convert column dtypes
+        self._convert_column_dtypes(self.df)
 
-    def data_comparison(self):
-        # Compare TotalPremium by ZipCode
-        plt.figure(figsize=(12, 6))
-        sns.boxplot(x='ZipCode', y='TotalPremium', data=self.data)
-        plt.title('Total Premium by ZipCode')
-        plt.xticks(rotation=90)
-        plt.show()
+        # Separate features and targets
+        X = self.df.drop([target_premium, target_claims], axis=1, errors='ignore')
+        y_premium = self.df[target_premium] if target_premium in self.df.columns else None
+        y_claims = self.df[target_claims] if target_claims in self.df.columns else None
 
-    def outlier_detection(self):
-        # detecting outliers using box plots
-        numerical_cols = self.data.select_dtypes(include=['float64', 'int64']).columns
-        for col in numerical_cols:
-            plt.figure(figsize=(8, 4))
-            sns.boxplot(x=self.data[col])
-            plt.title(f'Box plot of {col}')
-            plt.show()
+        # Impute missing target values
+        if y_premium is not None:
+            y_premium.fillna(y_premium.median(), inplace=True)
+        if y_claims is not None:
+            y_claims.fillna(y_claims.median(), inplace=True)
 
-    def advanced_visualization(self):
-        #   Pair plot
-        sns.pairplot(self.data[['TotalPremium', 'TotalClaims', 'SumInsured']])
-        plt.title('Pair Plot')
-        plt.show()
+        # Identify numerical and categorical columns
+        numerical_cols = X.select_dtypes(include=np.number).columns.tolist()
+        categorical_cols = X.select_dtypes(exclude=np.number).columns.tolist()
+        logging.info(f"Identified {len(numerical_cols)} numerical and {len(categorical_cols)} categorical columns.")
 
-        # Violin plot
-        plt.figure(figsize=(12, 6))
-        sns.violinplot(x='ZipCode', y='TotalClaims', data=self.data)
-        plt.title('Violin Plot of Total Claims by ZipCode')
-        plt.xticks(rotation=90)
-        plt.show()
+        # Create preprocessing pipeline
+        preprocessor = self._create_preprocessing_pipeline(numerical_cols, categorical_cols)
 
-        #  Heatmap of correlations
-        corr_matrix = self.data.corr()
-        plt.figure(figsize=(12, 10))
-        sns.heatmap(corr_matrix, annot=True, cmap='coolwarm')
-        plt.title('Heatmap of Correlations')
-        plt.show()
+        # Apply preprocessing steps
+        X_processed = preprocessor.fit_transform(X)
+        X_processed = pd.DataFrame(X_processed, columns=preprocessor.get_feature_names_out())
+
+        # Combine features and targets for saving
+        processed_data = X_processed.copy()
+        if y_premium is not None:
+            processed_data[target_premium] = y_premium.values
+        if y_claims is not None:
+            processed_data[target_claims] = y_claims.values
+
+        # Save processed data to CSV
+        self._save_processed_data(processed_data)
+
+        # Split data into training and testing sets
+        X_train_p, X_test_p, y_train_p, y_test_p = train_test_split(
+            X_processed, y_premium, test_size=self.test_size, random_state=self.random_state
+        ) if y_premium is not None else (None, None, None, None)
+
+        X_train_c, X_test_c, y_train_c, y_test_c = train_test_split(
+            X_processed, y_claims, test_size=self.test_size, random_state=self.random_state
+        ) if y_claims is not None else (None, None, None, None)
+
+        return X_train_p, X_test_p, y_train_p, y_test_p, X_train_c, X_test_c, y_train_c, y_test_c
+
+    def _create_preprocessing_pipeline(self, numerical_cols, categorical_cols):
+        numerical_transformer = Pipeline([
+            ('imputer', SimpleImputer(strategy='mean')),
+            ('scaler', StandardScaler())
+        ])
+
+        categorical_transformer = Pipeline([
+            ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
+        ])
+
+        preprocessor = ColumnTransformer(
+            transformers=[
+                ('num', numerical_transformer, numerical_cols),
+                ('cat', categorical_transformer, categorical_cols)
+            ],
+            remainder='passthrough'
+        )
+
+        return preprocessor
+
+    def _save_processed_data(self, processed_data):
+        output_file = os.path.join(self.output_dir, 'processed_data_with_targets.csv')
+        processed_data.to_csv(output_file, index=False)
+        logging.info(f"Processed data with targets saved to {output_file}")
+
+    def _convert_column_dtypes(self, df):
+        def convert_column_dtype(col):
+            if df[col].dtype == object:
+                df[col] = df[col].replace({',': '.'}, regex=True)
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+            elif df[col].dtype in [int, float]:
+                if df[col].apply(lambda x: isinstance(x, float)).any():
+                    df[col] = df[col].astype(float)
+
+        for col in df.columns:
+            convert_column_dtype(col)
